@@ -78,10 +78,13 @@ def parse_timepad_events():
     url = "https://timepad.ru/events/kazan/business/"
     
     options = ChromeOptions()
-    options.add_argument("--headless") # Run in background
+    options.add_argument("--headless=new") # Update to new headless mode
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-blink-features=AutomationControlled") # Hide bot status
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--remote-debugging-port=9222") # Fix for some CI crashes
+    options.add_argument("--disable-blink-features=AutomationControlled") 
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
     events = []
@@ -92,12 +95,16 @@ def parse_timepad_events():
         driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
         driver.get(url)
         
+        # Save screenshot for debugging if needed (can be uploaded as artifact in future)
+        # driver.save_screenshot("debug.png")
+
         # Wait for content to load
         try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".t-card, .t-search-event-card, a[href*='timepad.ru/event/']"))
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div"))
             )
-            time.sleep(3) # Extra wait for dynamic content
+            time.sleep(5) # Give it good time to render JS
+
         except Exception as e:
             logging.warning(f"Timeout waiting for elements: {e}")
 
