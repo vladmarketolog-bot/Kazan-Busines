@@ -252,6 +252,15 @@ def generate_post_content(event):
             continue
             
     logging.error("All AI models failed.")
+    # Debug: List available models to see what we CAN use
+    try:
+        logging.info("Listing available models:")
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                logging.info(f"- {m.name}")
+    except Exception as e:
+        logging.error(f"Could not list models: {e}")
+        
     return None
 
 def main():
