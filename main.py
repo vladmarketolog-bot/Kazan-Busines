@@ -45,8 +45,7 @@ CHANNEL_ID = get_clean_channel_id(CHANNEL_ID)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Reverting to standard model name, as 'latest' might be unstable
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    pass
 
 if TELEGRAM_TOKEN:
     bot = telebot.TeleBot(TELEGRAM_TOKEN)
@@ -236,14 +235,24 @@ def generate_post_content(event):
        
        #бизнесКазань
     """
-    try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        if text.startswith('```'): text = text.strip('`').replace('markdown','').strip()
-        return text
-    except Exception as e:
-        logging.error(f"Gemini error: {e}")
-        return None
+    
+    # List of models to try in order of preference
+    # Note: gemini-1.5-flash is preferred for speed/cost, gemini-pro is reliable fallback
+    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-flash-001', 'gemini-pro']
+    
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+            if text.startswith('```'): text = text.strip('`').replace('markdown','').strip()
+            return text
+        except Exception as e:
+            logging.warning(f"Model {model_name} failed: {e}")
+            continue
+            
+    logging.error("All AI models failed.")
+    return None
 
 def main():
     if not TELEGRAM_TOKEN or not CHANNEL_ID:
