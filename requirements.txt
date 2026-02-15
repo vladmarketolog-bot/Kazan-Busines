@@ -3,3 +3,4 @@ google-generativeai
 selenium
 webdriver-manager
 python-dotenv
+beautifulsoup4
