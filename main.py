@@ -184,6 +184,7 @@ def scrape_gorodzovet(driver):
             if not href.startswith('/'): continue # Relative links mostly
             if len(href) < 5: continue
             if any(x in href for x in ['/cat/', '/day/', '/add/', '/user/', '/login/']): continue
+            if '-event' not in href: continue
             
             full_url = 'https://gorodzovet.ru' + href
 
