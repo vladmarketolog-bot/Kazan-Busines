@@ -67,26 +67,15 @@ def save_processed_events(processed_events):
 def parse_timepad_events():
     """Scrapes business events from Timepad in Kazan."""
     url = "https://timepad.ru/events/kazan/business/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://timepad.ru/",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1"
-    }
+    # Use cloudscraper to bypass Cloudflare/403 errors
+    import cloudscraper
+    scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = scraper.get(url, timeout=15)
         response.raise_for_status()
-    except requests.RequestException as e:
-        logging.error(f"Failed to fetch Timepad: {e}")
+    except Exception as e:
+        logging.error(f"Failed to fetch Timepad with cloudscraper: {e}")
         return []
 
     soup = BeautifulSoup(response.text, 'html.parser')
