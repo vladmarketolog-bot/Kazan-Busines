@@ -63,6 +63,26 @@ def save_processed_events(processed_events):
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(list(processed_events), f, ensure_ascii=False, indent=4)
 
+def save_event_to_db(event_data):
+    """Saves structured event data to events_db.json"""
+    db_file = 'events_db.json'
+    events = []
+    if os.path.exists(db_file):
+        try:
+            with open(db_file, 'r', encoding='utf-8') as f:
+                events = json.load(f)
+        except:
+            events = []
+    
+    # Check if event already exists (by URL)
+    for e in events:
+        if e['url'] == event_data['url']:
+            return # Already exists
+            
+    events.append(event_data)
+    with open(db_file, 'w', encoding='utf-8') as f:
+        json.dump(events, f, ensure_ascii=False, indent=4)
+
 def is_similar(title1, title2, threshold=0.85):
     """Checks if two titles are similar using SequenceMatcher."""
     return difflib.SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > threshold
@@ -228,18 +248,14 @@ def generate_post_content(event):
     {full_text_snippet}
 
     Инструкция:
-    1. Проанализируй текст. Если мероприятие явно НЕ относится к бизнесу, нетворкингу, IT, маркетингу, саморазвитию или карьере в Казани (или онлайн), ответь: 'IGNORE'.
-    2. Если подходит, создай пост:
-       ЗАГОЛОВОК (Короткий, цепляющий, КАПСОМ, на основе сути мероприятия)
+    1. Проанализируй текст. Если мероприятие явно НЕ относится к бизнесу, нетворкингу, IT, маркетингу, саморазвитию или карьере в Казани (или онлайн), верни JSON с полем "action": "IGNORE".
+    2. Если подходит, создай пост и верни JSON со следующими полями:
+       - "action": "POST"
+       - "post_text": "Текст поста... (ЗАГОЛОВОК, Дата и время, Место, Тезисы, Ссылка, #бизнесКазань)"
+       - "event_date": "YYYY-MM-DD" (Найди дату начала. Если не нашел или это 'каждый день', верни null. Если диапазон, верни дату начала)
+       - "is_online": true/false
        
-       🗓 Дата и время: [Найди точную дату и время старта в тексте. Пиши в формате "ДД месяц, ЧЧ:ММ". Если не нашел — пиши "Уточняйте на сайте"]
-       📍 Место: [Найди адрес или площадка. Если онлайн — пиши "Онлайн". Если нет данных — "Казань"]
-       
-       [3-4 ключевых тезиса с эмодзи ⚫, почему стоит пойти: спикеры, темы, польза]
-       
-       🔗 Регистрация: {event['url']}
-       
-       #бизнесКазань
+    ОБЯЗАТЕЛЬНО верни валидный JSON. Не используй Markdown formatting (```json) вокруг ответа.
     """
     
     # List of models to try in order of preference (updated based on user logs)
@@ -248,11 +264,11 @@ def generate_post_content(event):
     
     for model_name in models_to_try:
         try:
-            model = genai.GenerativeModel(model_name)
+            model = genai.GenerativeModel(model_name, generation_config={"response_mime_type": "application/json"})
             response = model.generate_content(prompt)
             text = response.text.strip()
-            if text.startswith('```'): text = text.strip('`').replace('markdown','').strip()
-            return text
+            if text.startswith('```'): text = text.strip('`').replace('json','').strip()
+            return json.loads(text)
         except Exception as e:
             logging.warning(f"Model {model_name} failed: {e}")
             continue
@@ -336,18 +352,36 @@ def main():
                 logging.error(f"Failed to fetch details for {event['url']}: {e}")
                 event['full_text'] = ""
 
-            content = generate_post_content(event)
+            ai_response = generate_post_content(event)
             
-            if not content: continue
-            if content == 'IGNORE':
+            if not ai_response: continue
+            
+            if ai_response.get('action') == 'IGNORE':
                 logging.info(f"Ignored: {event['title']}")
                 processed_events.add(event['url'])
                 continue
                 
+            content = ai_response.get('post_text')
+            if not content:
+                logging.error(f"No post text in AI response for {event['title']}")
+                continue
+
             try:
                 if len(content) > 4096: content = content[:4093] + "..."
                 bot.send_message(CHANNEL_ID, content)
                 logging.info(f"✅ Posted: {event['title']}")
+                
+                # Save to full DB
+                event_record = {
+                    'url': event['url'],
+                    'title': event['title'],
+                    'date': ai_response.get('event_date'),
+                    'source': event['source'],
+                    'created_at': datetime.now().isoformat(),
+                    'post_text': content
+                }
+                save_event_to_db(event_record)
+                
                 processed_events.add(event['url'])
                 new_posts += 1
                 time.sleep(3)
