@@ -64,71 +64,101 @@ def save_processed_events(processed_events):
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(list(processed_events), f, ensure_ascii=False, indent=4)
 
+# --- Selenium Setup ---
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
 def parse_timepad_events():
-    """Scrapes business events from Timepad in Kazan."""
+    """Scrapes business events from Timepad in Kazan using Selenium."""
     url = "https://timepad.ru/events/kazan/business/"
-    # Use cloudscraper to bypass Cloudflare/403 errors
-    import cloudscraper
-    scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
+    
+    options = ChromeOptions()
+    options.add_argument("--headless") # Run in background
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled") # Hide bot status
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    events = []
+    driver = None
     
     try:
-        response = scraper.get(url, timeout=15)
-        response.raise_for_status()
+        logging.info("Starting Selenium driver...")
+        driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+        driver.get(url)
+        
+        # Wait for content to load
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".t-card, .t-search-event-card, a[href*='timepad.ru/event/']"))
+            )
+            time.sleep(3) # Extra wait for dynamic content
+        except Exception as e:
+            logging.warning(f"Timeout waiting for elements: {e}")
+
+        # Parse with BeautifulSoup as before, or use Selenium find_elements
+        # Using BS4 for consistency with previous logic and speed after load
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        
+        # Try multiple selectors for robustness
+        event_cards = soup.select('.t-card') 
+        if not event_cards:
+             event_cards = soup.select('.t-search-event-card')
+
+        if not event_cards:
+            # Fallback: scan for links
+            links = soup.select('a[href^="https://"][href*="timepad.ru/event/"]')
+            seen_links = set()
+            for link in links:
+                 href = link.get('href')
+                 if href not in seen_links:
+                     title = link.get_text(strip=True)
+                     if title and len(title) > 5:
+                         events.append({
+                             'url': href,
+                             'title': title,
+                             'description': '', 
+                             'date_str': 'См. по ссылке' 
+                         })
+                         seen_links.add(href)
+        else:
+            for card in event_cards[:10]:
+                try:
+                    link_tag = card.select_one('a.t-card__link') or card.select_one('a')
+                    if not link_tag: continue
+                    
+                    url = link_tag.get('href')
+                    if not url.startswith('http'):
+                        url = 'https://timepad.ru' + url
+                    
+                    header_tag = card.select_one('.t-card__header') or card.select_one('h3')
+                    title = header_tag.get_text(strip=True) if header_tag else "Без названия"
+                    
+                    desc_tag = card.select_one('.t-card__description') or card.select_one('p')
+                    desc = desc_tag.get_text(strip=True) if desc_tag else ""
+                    
+                    date_tag = card.select_one('.t-card__date')
+                    date_str = date_tag.get_text(strip=True) if date_tag else ""
+
+                    events.append({
+                        'url': url,
+                        'title': title,
+                        'description': desc,
+                        'date_str': date_str
+                    })
+                except Exception as e:
+                    logging.error(f"Error parsing card: {e}")
+
     except Exception as e:
-        logging.error(f"Failed to fetch Timepad with cloudscraper: {e}")
-        return []
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    events = []
-    
-    # Try multiple selectors for robustness
-    event_cards = soup.select('.t-card') 
-    if not event_cards:
-         event_cards = soup.select('.t-search-event-card') # Alternate class
-
-    if not event_cards:
-        # Fallback: scan for links
-        links = soup.select('a[href^="https://"][href*="timepad.ru/event/"]')
-        seen_links = set()
-        for link in links:
-             href = link.get('href')
-             if href not in seen_links:
-                 title = link.get_text(strip=True)
-                 if title and len(title) > 5:
-                     events.append({
-                         'url': href,
-                         'title': title,
-                         'description': '', 
-                         'date_str': 'См. по ссылке' 
-                     })
-                     seen_links.add(href)
-    else:
-        for card in event_cards[:10]:
-            try:
-                link_tag = card.select_one('a.t-card__link') or card.select_one('a')
-                if not link_tag: continue
-                
-                url = link_tag.get('href')
-                if not url.startswith('http'):
-                    url = 'https://timepad.ru' + url
-                
-                header_tag = card.select_one('.t-card__header') or card.select_one('h3')
-                title = header_tag.get_text(strip=True) if header_tag else "Без названия"
-                
-                desc_tag = card.select_one('.t-card__description') or card.select_one('p')
-                desc = desc_tag.get_text(strip=True) if desc_tag else ""
-                
-                date_tag = card.select_one('.t-card__date')
-                date_str = date_tag.get_text(strip=True) if date_tag else ""
-
-                events.append({
-                    'url': url,
-                    'title': title,
-                    'description': desc,
-                    'date_str': date_str
-                })
-            except Exception as e:
-                logging.error(f"Error parsing card: {e}")
+        logging.error(f"Selenium error: {e}")
+    finally:
+        if driver:
+            driver.quit()
 
     return events
 
