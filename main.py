@@ -213,6 +213,9 @@ def scrape_gorodzovet(driver):
 def generate_post_content(event):
     if not GEMINI_API_KEY: return None
 
+    # Limit text to ~5000 chars to fit in context window and avoid noise
+    full_text_snippet = event.get('full_text', '')[:5000]
+
     prompt = f"""
     Ты — опытный SMM-менеджер бизнес-сообщества.
     
@@ -220,16 +223,18 @@ def generate_post_content(event):
     Источник: {event.get('source')}
     Название: {event['title']}
     Ссылка: {event['url']}
+    Текст со страницы мероприятия: 
+    {full_text_snippet}
 
     Инструкция:
-    1. Если мероприятие явно НЕ относится к бизнесу, нетворкингу, IT, саморазвитию или карьере в Казани, ответь: 'IGNORE'.
+    1. Проанализируй текст. Если мероприятие явно НЕ относится к бизнесу, нетворкингу, IT, маркетингу, саморазвитию или карьере в Казани (или онлайн), ответь: 'IGNORE'.
     2. Если подходит, создай пост:
-       ЗАГОЛОВОК (Короткий, цепляющий, КАПСОМ)
+       ЗАГОЛОВОК (Короткий, цепляющий, КАПСОМ, на основе сути мероприятия)
        
-       🗓 Дата и время: Уточняйте на сайте
-       📍 Место: Казань
+       🗓 Дата и время: [Найди точную дату и время старта в тексте. Пиши в формате "ДД месяц, ЧЧ:ММ". Если не нашел — пиши "Уточняйте на сайте"]
+       📍 Место: [Найди адрес или площадка. Если онлайн — пиши "Онлайн". Если нет данных — "Казань"]
        
-       [3-4 ключевых тезиса с эмодзи ⚫, почему стоит пойти, исходя из названия]
+       [3-4 ключевых тезиса с эмодзи ⚫, почему стоит пойти: спикеры, темы, польза]
        
        🔗 Регистрация: {event['url']}
        
@@ -281,66 +286,79 @@ def main():
         # 2. Scrape GorodZovet
         gz_events = scrape_gorodzovet(driver)
         
+        # Combine and Deduplicate
+        final_events = []
+        
+        # Add all new Timepad events first
+        for e in tp_events:
+            if e['url'] not in processed_events:
+                final_events.append(e)
+                
+        # Add GorodZovet events ONLY if not similar to Timepad events (either new or old)
+        for gz in gz_events:
+            if gz['url'] in processed_events: continue
+            
+            is_duplicate = False
+            for tp in final_events:
+                if is_similar(gz['title'], tp['title']):
+                    logging.info(f"Skipping GorodZovet duplicate: {gz['title']} ~= {tp['title']}")
+                    processed_events.add(gz['url']) # Mark as processed so we don't re-check
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                final_events.append(gz)
+                
+        logging.info(f"After deduplication: {len(final_events)} events to process.")
+        
+        # Process with AI
+        new_posts = 0
+        for event in final_events:
+            logging.info(f"Enriching & Processing: {event['title']}")
+            
+            # Enrich with full page body for better AI context (Date, Place, etc.)
+            try:
+                driver.get(event['url'])
+                time.sleep(2) # Be polite
+                # Wait for body
+                try:
+                    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                except: pass
+                
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+                # Clean text: remove scripts, styles
+                text = soup.get_text(separator='\n', strip=True)
+                event['full_text'] = text
+                
+            except Exception as e:
+                logging.error(f"Failed to fetch details for {event['url']}: {e}")
+                event['full_text'] = ""
+
+            content = generate_post_content(event)
+            
+            if not content: continue
+            if content == 'IGNORE':
+                logging.info(f"Ignored: {event['title']}")
+                processed_events.add(event['url'])
+                continue
+                
+            try:
+                if len(content) > 4096: content = content[:4093] + "..."
+                bot.send_message(CHANNEL_ID, content)
+                logging.info(f"✅ Posted: {event['title']}")
+                processed_events.add(event['url'])
+                new_posts += 1
+                time.sleep(3)
+            except Exception as e:
+                logging.error(f"Telegram error: {e}")
+
+        save_processed_events(processed_events)
+        logging.info(f"Done. Sent {new_posts} posts.")
+
     except Exception as e:
         logging.error(f"Global scraper error: {e}")
-        if driver: driver.quit()
-        return
     finally:
         if driver: driver.quit()
-
-    # Combine and Deduplicate
-    final_events = []
-    
-    # Add all new Timepad events first
-    for e in tp_events:
-        if e['url'] not in processed_events:
-            final_events.append(e)
-            
-    # Add GorodZovet events ONLY if not similar to Timepad events (either new or old)
-    # Note: We can only check title similarity against 'final_events' (current run) easily.
-    # Checking against all history is harder without storing titles.
-    # We will assume: if it's a popular event, it's likely on Timepad and we caught it above.
-    
-    for gz in gz_events:
-        if gz['url'] in processed_events: continue
-        
-        is_duplicate = False
-        for tp in final_events:
-            if is_similar(gz['title'], tp['title']):
-                logging.info(f"Skipping GorodZovet duplicate: {gz['title']} ~= {tp['title']}")
-                processed_events.add(gz['url']) # Mark as processed so we don't re-check
-                is_duplicate = True
-                break
-        
-        if not is_duplicate:
-            final_events.append(gz)
-            
-    logging.info(f"After deduplication: {len(final_events)} events to process.")
-    
-    # Process with AI
-    new_posts = 0
-    for event in final_events:
-        logging.info(f"AI Processing: {event['title']}")
-        content = generate_post_content(event)
-        
-        if not content: continue
-        if content == 'IGNORE':
-            logging.info(f"Ignored: {event['title']}")
-            processed_events.add(event['url'])
-            continue
-            
-        try:
-            if len(content) > 4096: content = content[:4093] + "..."
-            bot.send_message(CHANNEL_ID, content)
-            logging.info(f"✅ Posted: {event['title']}")
-            processed_events.add(event['url'])
-            new_posts += 1
-            time.sleep(3)
-        except Exception as e:
-            logging.error(f"Telegram error: {e}")
-
-    save_processed_events(processed_events)
-    logging.info(f"Done. Sent {new_posts} posts.")
 
 if __name__ == "__main__":
     main()
