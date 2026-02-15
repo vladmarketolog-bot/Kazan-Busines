@@ -75,15 +75,16 @@ from selenium.webdriver.support import expected_conditions as EC
 
 def parse_timepad_events():
     """Scrapes business events from Timepad in Kazan using Selenium."""
-    url = "https://timepad.ru/events/kazan/business/"
+    # Updated URL from user
+    url = "https://afisha.timepad.ru/kazan/categories/biznes"
     
     options = ChromeOptions()
-    options.add_argument("--headless=new") # Update to new headless mode
+    options.add_argument("--headless=new") 
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-    options.add_argument("--remote-debugging-port=9222") # Fix for some CI crashes
+    options.add_argument("--remote-debugging-port=9222") 
     options.add_argument("--disable-blink-features=AutomationControlled") 
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
@@ -91,7 +92,7 @@ def parse_timepad_events():
     driver = None
     
     try:
-        logging.info("Starting Selenium driver...")
+        logging.info(f"Starting Selenium driver for {url}...")
         driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
         driver.get(url)
         time.sleep(5) 
@@ -100,7 +101,7 @@ def parse_timepad_events():
         driver.save_screenshot("debug.png")
         logging.info(f"Page Title: {driver.title}")
         
-        # Wait for content
+        # Wait for content (generic body or react root)
         try:
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
@@ -110,66 +111,57 @@ def parse_timepad_events():
             
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         
-        # Debug: Print first 500 chars of text to see if blocked
+        # Debug: Print snippet
         clean_text = soup.get_text(separator=' ', strip=True)[:500]
         logging.info(f"Page Content Snippet: {clean_text}")
         
-        # Try multiple selectors for robustness
-        event_cards = soup.select('.t-card') 
-        if not event_cards:
-             event_cards = soup.select('.t-search-event-card, div[class*="event-card"]')
+        # Universal Scraper for Afisha & Classic Timepad
+        # 1. Find all links that look like events
+        links = soup.find_all('a', href=True)
+        seen_links = set()
+        
+        for link in links:
+            href = link.get('href')
+            
+            # Filter relevant links
+            if '/event/' in href and 'timepad.ru' in href:
+                full_url = href
+            elif href.startswith('/event/'):
+                full_url = 'https://afisha.timepad.ru' + href
+            elif href.startswith('https://timepad.ru/event/'):
+                 full_url = href
+            else:
+                continue
+            
+            # Skip if already processed in this run
+            if full_url in seen_links:
+                continue
 
-        if not event_cards:
-            # Fallback: scan for ANY links containing /event/
-            # and generic timepad links
-            links = soup.find_all('a', href=True)
-            seen_links = set()
-            for link in links:
-                 href = link.get('href')
-                 if '/event/' in href:
-                     # Make absolute ID
-                     if href.startswith('/'):
-                         href = 'https://timepad.ru' + href
-                     
-                     if href not in seen_links:
-                         title = link.get_text(strip=True)
-                         # Filter out short/empty titles or "Registration" buttons
-                         if title and len(title) > 5:
-                             events.append({
-                                 'url': href,
-                                 'title': title,
-                                 'description': '', 
-                                 'date_str': 'См. по ссылке' 
-                             })
-                             seen_links.add(href)
-        else:
-            for card in event_cards[:10]:
-                try:
-                    link_tag = card.select_one('a.t-card__link') or card.select_one('a')
-                    if not link_tag: continue
-                    
-                    url = link_tag.get('href')
-                    if not url.startswith('http'):
-                        url = 'https://timepad.ru' + url
-                    
-                    header_tag = card.select_one('.t-card__header') or card.select_one('h3')
-                    title = header_tag.get_text(strip=True) if header_tag else "Без названия"
-                    
-                    desc_tag = card.select_one('.t-card__description') or card.select_one('p')
-                    desc = desc_tag.get_text(strip=True) if desc_tag else ""
-                    
-                    date_tag = card.select_one('.t-card__date')
-                    date_str = date_tag.get_text(strip=True) if date_tag else ""
-
-                    events.append({
-                        'url': url,
-                        'title': title,
-                        'description': desc,
-                        'date_str': date_str
-                    })
-                except Exception as e:
-                    logging.error(f"Error parsing card: {e}")
-
+            # Try to get title from the link itself or its children
+            title = link.get_text(strip=True)
+            
+            # If link has no text (e.g. image wrapper), try finding a sibling or parent card title
+            if not title:
+                # Naive attempt: check for 'aria-label' or 'title' attribute
+                title = link.get('title') or link.get('aria-label')
+                
+            # Valid title check
+            if title and len(title) > 5 and "регистрация" not in title.lower():
+                # Try to find date
+                # In Afisha, dates are often in separate divs, hard to map generically without specific classes.
+                # We will let AI figure it out from the Description (which we leave empty for now, 
+                # or maybe fetch individual pages if needed, but that's slow).
+                # New plan: Use "См. по ссылке" for date, AI scrapes details if it can? 
+                # No, standard is AI generates post. We put "См. по ссылке" if date missing.
+                
+                events.append({
+                    'url': full_url,
+                    'title': title,
+                    'description': '', 
+                    'date_str': 'См. по ссылке' 
+                })
+                seen_links.add(full_url)
+                
     except Exception as e:
         logging.error(f"Selenium error: {e}")
     finally:
