@@ -36,6 +36,12 @@ jobs:
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
           # We only care about this file
-          git add processed_events.json
           # Check if there are changes to commit
           git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update processed events [skip ci]" && git push)
+
+      - name: Upload Debug Screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: debug.png

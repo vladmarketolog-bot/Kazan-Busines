@@ -94,45 +94,54 @@ def parse_timepad_events():
         logging.info("Starting Selenium driver...")
         driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
         driver.get(url)
+        time.sleep(5) 
         
-        # Save screenshot for debugging if needed (can be uploaded as artifact in future)
-        # driver.save_screenshot("debug.png")
-
-        # Wait for content to load
+        # DEBUG: Snapshot
+        driver.save_screenshot("debug.png")
+        logging.info(f"Page Title: {driver.title}")
+        
+        # Wait for content
         try:
             WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div"))
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(5) # Give it good time to render JS
-
-        except Exception as e:
-            logging.warning(f"Timeout waiting for elements: {e}")
-
-        # Parse with BeautifulSoup as before, or use Selenium find_elements
-        # Using BS4 for consistency with previous logic and speed after load
+        except:
+            pass
+            
         soup = BeautifulSoup(driver.page_source, 'html.parser')
+        
+        # Debug: Print first 500 chars of text to see if blocked
+        clean_text = soup.get_text(separator=' ', strip=True)[:500]
+        logging.info(f"Page Content Snippet: {clean_text}")
         
         # Try multiple selectors for robustness
         event_cards = soup.select('.t-card') 
         if not event_cards:
-             event_cards = soup.select('.t-search-event-card')
+             event_cards = soup.select('.t-search-event-card, div[class*="event-card"]')
 
         if not event_cards:
-            # Fallback: scan for links
-            links = soup.select('a[href^="https://"][href*="timepad.ru/event/"]')
+            # Fallback: scan for ANY links containing /event/
+            # and generic timepad links
+            links = soup.find_all('a', href=True)
             seen_links = set()
             for link in links:
                  href = link.get('href')
-                 if href not in seen_links:
-                     title = link.get_text(strip=True)
-                     if title and len(title) > 5:
-                         events.append({
-                             'url': href,
-                             'title': title,
-                             'description': '', 
-                             'date_str': 'См. по ссылке' 
-                         })
-                         seen_links.add(href)
+                 if '/event/' in href:
+                     # Make absolute ID
+                     if href.startswith('/'):
+                         href = 'https://timepad.ru' + href
+                     
+                     if href not in seen_links:
+                         title = link.get_text(strip=True)
+                         # Filter out short/empty titles or "Registration" buttons
+                         if title and len(title) > 5:
+                             events.append({
+                                 'url': href,
+                                 'title': title,
+                                 'description': '', 
+                                 'date_str': 'См. по ссылке' 
+                             })
+                             seen_links.add(href)
         else:
             for card in event_cards[:10]:
                 try:
