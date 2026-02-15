@@ -236,9 +236,9 @@ def generate_post_content(event):
        #бизнесКазань
     """
     
-    # List of models to try in order of preference
-    # Note: gemini-1.5-flash is preferred for speed/cost, gemini-pro is reliable fallback
-    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-flash-001', 'gemini-pro']
+    # List of models to try in order of preference (updated based on user logs)
+    # Using newer 2.0 models which are available for this API key
+    models_to_try = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-flash-latest']
     
     for model_name in models_to_try:
         try:
