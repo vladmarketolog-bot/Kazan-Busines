@@ -45,8 +45,8 @@ CHANNEL_ID = get_clean_channel_id(CHANNEL_ID)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Using specific version to avoid 404
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    # Reverting to standard model name, as 'latest' might be unstable
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
 if TELEGRAM_TOKEN:
     bot = telebot.TeleBot(TELEGRAM_TOKEN)
