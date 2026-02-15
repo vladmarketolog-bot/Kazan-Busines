@@ -294,14 +294,15 @@ def main():
             if e['url'] not in processed_events:
                 final_events.append(e)
                 
-        # Add GorodZovet events ONLY if not similar to Timepad events (either new or old)
+        # Add GorodZovet events ONLY if not similar to ANY Timepad event (even if Timepad event was already processed)
         for gz in gz_events:
             if gz['url'] in processed_events: continue
             
             is_duplicate = False
-            for tp in final_events:
+            # Check against ALL current Timepad events, not just the new ones in final_events
+            for tp in tp_events:
                 if is_similar(gz['title'], tp['title']):
-                    logging.info(f"Skipping GorodZovet duplicate: {gz['title']} ~= {tp['title']}")
+                    logging.info(f"Skipping GorodZovet duplicate (found in Timepad): {gz['title']}")
                     processed_events.add(gz['url']) # Mark as processed so we don't re-check
                     is_duplicate = True
                     break
