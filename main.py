@@ -45,7 +45,8 @@ CHANNEL_ID = get_clean_channel_id(CHANNEL_ID)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Using specific version to avoid 404
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 if TELEGRAM_TOKEN:
     bot = telebot.TeleBot(TELEGRAM_TOKEN)
@@ -115,9 +116,13 @@ def scrape_timepad(driver):
             full_url = href
             
             # Flexible matching for Afisha and classic Timepad
-            if '/event/' in href:
+            # Matches /event/, /events/, /kazan/events/ etc.
+            if '/event' in href:
                 if href.startswith('/'):
-                    full_url = 'https://afisha.timepad.ru' + href
+                    if 'afisha.timepad.ru' in url: # If we are on afisha, relative links are likely afisha
+                        full_url = 'https://afisha.timepad.ru' + href
+                    else:
+                        full_url = 'https://timepad.ru' + href
                 elif href.startswith('http'):
                     full_url = href
             else:
