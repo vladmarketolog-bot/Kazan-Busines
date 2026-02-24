@@ -87,6 +87,25 @@ def is_similar(title1, title2, threshold=0.85):
     """Checks if two titles are similar using SequenceMatcher."""
     return difflib.SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > threshold
 
+def load_posted_titles():
+    """Loads titles of all previously posted events from events_db.json."""
+    db_file = 'events_db.json'
+    if not os.path.exists(db_file):
+        return set()
+    try:
+        with open(db_file, 'r', encoding='utf-8') as f:
+            events = json.load(f)
+        return set(e['title'].lower() for e in events if 'title' in e)
+    except:
+        return set()
+
+def is_title_already_posted(title, posted_titles, threshold=0.85):
+    """Returns True if a similar title has already been posted before."""
+    for posted in posted_titles:
+        if difflib.SequenceMatcher(None, title.lower(), posted).ratio() >= threshold:
+            return True
+    return False
+
 # --- Selenium Driver Factory ---
 def create_driver():
     options = ChromeOptions()
@@ -293,6 +312,10 @@ def main():
     processed_events = load_processed_events()
     logging.info(f"Loaded {len(processed_events)} processed events.")
     
+    # Load titles of already-posted events for content-based deduplication
+    posted_titles = load_posted_titles()
+    logging.info(f"Loaded {len(posted_titles)} posted titles for dedup check.")
+    
     driver = None
     try:
         driver = create_driver()
@@ -333,6 +356,12 @@ def main():
         new_posts = 0
         for event in final_events:
             logging.info(f"Enriching & Processing: {event['title']}")
+            
+            # --- Title-based deduplication (catches same event with new URL/ID) ---
+            if is_title_already_posted(event['title'], posted_titles):
+                logging.info(f"Skipping (title already posted): {event['title']}")
+                processed_events.add(event['url'])  # Mark URL as processed too
+                continue
             
             # Enrich with full page body for better AI context (Date, Place, etc.)
             try:
@@ -383,6 +412,7 @@ def main():
                 save_event_to_db(event_record)
                 
                 processed_events.add(event['url'])
+                posted_titles.add(event['title'].lower())  # Update in-memory set
                 new_posts += 1
                 time.sleep(3)
             except Exception as e:
